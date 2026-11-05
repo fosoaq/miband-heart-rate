@@ -52,7 +52,13 @@ fn parse_args() -> Result<Args> {
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--port" => args.port = it.next().context("--port needs a value")?.parse().context("invalid port")?,
+            "--port" => {
+                args.port = it
+                    .next()
+                    .context("--port needs a value")?
+                    .parse()
+                    .context("invalid port")?
+            }
             "--hidden" => args.hidden = true,
             "--headless" => args.headless = true,
             "--demo" => args.demo = true,
@@ -110,7 +116,11 @@ fn main() -> Result<()> {
         return rt.block_on(headless(rx));
     }
 
-    let opts = ui::Options { overlay_url, server_error, start_hidden: args.hidden };
+    let opts = ui::Options {
+        overlay_url,
+        server_error,
+        start_hidden: args.hidden,
+    };
     ui::run(rx, rt.handle().clone(), opts).map_err(|e| anyhow::anyhow!("{e}"))?;
     // Don't wait for BLE / HTTP tasks blocked on I/O.
     rt.shutdown_timeout(Duration::from_millis(200));
@@ -146,7 +156,12 @@ async fn demo(tx: Tx) {
         noise ^= noise << 5;
         let jitter = (noise % 5) as f32 - 2.0;
         let bpm = 78.0 + 18.0 * (t / 40.0).sin() + 6.0 * (t / 7.0).sin() + jitter;
-        tx.send_modify(|s| s.push(hr::Measurement { bpm: bpm as u16, contact: Some(true) }));
+        tx.send_modify(|s| {
+            s.push(hr::Measurement {
+                bpm: bpm as u16,
+                contact: Some(true),
+            })
+        });
         t += 1.0;
         tokio::time::sleep(Duration::from_secs(1)).await;
     }

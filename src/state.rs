@@ -53,7 +53,11 @@ pub struct State {
 
 impl Default for State {
     fn default() -> Self {
-        Self { status: Status::Starting, last: None, history: VecDeque::new() }
+        Self {
+            status: Status::Starting,
+            last: None,
+            history: VecDeque::new(),
+        }
     }
 }
 
@@ -75,8 +79,15 @@ impl State {
     pub fn push(&mut self, m: Measurement) {
         let now = Instant::now();
         self.last = Some(m);
-        self.history.push_back(Sample { at: now, bpm: m.bpm });
-        while self.history.front().is_some_and(|s| now.duration_since(s.at) > HISTORY_WINDOW) {
+        self.history.push_back(Sample {
+            at: now,
+            bpm: m.bpm,
+        });
+        while self
+            .history
+            .front()
+            .is_some_and(|s| now.duration_since(s.at) > HISTORY_WINDOW)
+        {
             self.history.pop_front();
         }
     }
@@ -97,7 +108,11 @@ impl State {
             max = max.max(s.bpm);
             sum += u32::from(s.bpm);
         }
-        Some(Stats { min, avg: ((sum + n / 2) / n) as u16, max })
+        Some(Stats {
+            min,
+            avg: ((sum + n / 2) / n) as u16,
+            max,
+        })
     }
 
     pub fn to_json(&self) -> serde_json::Value {
@@ -124,7 +139,10 @@ mod tests {
     use super::*;
 
     fn m(bpm: u16) -> Measurement {
-        Measurement { bpm, contact: Some(true) }
+        Measurement {
+            bpm,
+            contact: Some(true),
+        }
     }
 
     #[test]
@@ -136,7 +154,14 @@ mod tests {
             s.push(m(b));
         }
         assert_eq!(s.bpm(), Some(81));
-        assert_eq!(s.stats(), Some(Stats { min: 60, avg: 70, max: 81 }));
+        assert_eq!(
+            s.stats(),
+            Some(Stats {
+                min: 60,
+                avg: 70,
+                max: 81
+            })
+        );
 
         s.set_status(Status::Scanning);
         assert_eq!(s.bpm(), None);

@@ -24,7 +24,8 @@ pub fn parse(data: &[u8]) -> Option<Measurement> {
     } else {
         u16::from(*rest.first()?)
     };
-    let contact = (flags & FLAG_CONTACT_SUPPORTED != 0).then_some(flags & FLAG_CONTACT_DETECTED != 0);
+    let contact =
+        (flags & FLAG_CONTACT_SUPPORTED != 0).then_some(flags & FLAG_CONTACT_DETECTED != 0);
     Some(Measurement { bpm, contact })
 }
 
@@ -34,12 +35,24 @@ mod tests {
 
     #[test]
     fn u8_value_without_contact() {
-        assert_eq!(parse(&[0x00, 72]), Some(Measurement { bpm: 72, contact: None }));
+        assert_eq!(
+            parse(&[0x00, 72]),
+            Some(Measurement {
+                bpm: 72,
+                contact: None
+            })
+        );
     }
 
     #[test]
     fn u16_value() {
-        assert_eq!(parse(&[0x01, 0x2C, 0x01]), Some(Measurement { bpm: 300, contact: None }));
+        assert_eq!(
+            parse(&[0x01, 0x2C, 0x01]),
+            Some(Measurement {
+                bpm: 300,
+                contact: None
+            })
+        );
     }
 
     #[test]

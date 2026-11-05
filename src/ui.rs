@@ -24,8 +24,12 @@ pub struct Options {
 
 pub fn run(rx: Rx, rt: tokio::runtime::Handle, opts: Options) -> eframe::Result {
     let icon = {
-        let (w, h, rgba) = crate::tray::heart_rgba(128, [0xff, 0x4d, 0x5e]);
-        egui::IconData { rgba, width: w, height: h }
+        let (w, h, rgba) = crate::tray::heart_rgba(128, [0xff, 0x4d, 0x5e], 0.88);
+        egui::IconData {
+            rgba,
+            width: w,
+            height: h,
+        }
     };
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -72,10 +76,18 @@ pub fn run(rx: Rx, rt: tokio::runtime::Handle, opts: Options) -> eframe::Result 
             };
             // Without a tray, hiding the window would make the app unreachable.
             if tray.is_none() && opts.start_hidden {
-                cc.egui_ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                cc.egui_ctx
+                    .send_viewport_cmd(ViewportCommand::Visible(true));
             }
 
-            Ok(Box::new(App { rx, opts, tray, pending, quitting: false, copied_at: None }))
+            Ok(Box::new(App {
+                rx,
+                opts,
+                tray,
+                pending,
+                quitting: false,
+                copied_at: None,
+            }))
         }),
     )
 }
@@ -165,7 +177,11 @@ fn dashboard(ui: &mut egui::Ui, state: &State) {
     ui.horizontal(|ui| {
         let text = state.bpm().map_or("--".to_owned(), |b| b.to_string());
         let color = if state.bpm().is_some() { strong } else { muted };
-        ui.label(RichText::new(text).font(FontId::proportional(96.0)).color(color));
+        ui.label(
+            RichText::new(text)
+                .font(FontId::proportional(96.0))
+                .color(color),
+        );
         ui.add_space(6.0);
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
             ui.add_space(18.0);
@@ -206,7 +222,11 @@ fn chart(ui: &mut egui::Ui, state: &State, height: f32) {
     let plot = Rect::from_min_max(rect.min, Pos2::new(rect.max.x - label_w, rect.max.y - 18.0));
 
     let now = Instant::now();
-    let pts: Vec<_> = state.history.iter().map(|s| (now.duration_since(s.at).as_secs_f32(), s.bpm)).collect();
+    let pts: Vec<_> = state
+        .history
+        .iter()
+        .map(|s| (now.duration_since(s.at).as_secs_f32(), s.bpm))
+        .collect();
     if pts.len() < 2 {
         painter.text(
             plot.center(),
@@ -218,7 +238,9 @@ fn chart(ui: &mut egui::Ui, state: &State, height: f32) {
         return;
     }
 
-    let (lo, hi) = pts.iter().fold((u16::MAX, 0), |(lo, hi), &(_, b)| (lo.min(b), hi.max(b)));
+    let (lo, hi) = pts
+        .iter()
+        .fold((u16::MAX, 0), |(lo, hi), &(_, b)| (lo.min(b), hi.max(b)));
     let pad = ((hi - lo) as f32 * 0.15).max(5.0);
     let (lo_f, hi_f) = (lo as f32 - pad, hi as f32 + pad);
     // Grow the time axis with the data: at least 1 minute, at most the history window.
@@ -248,7 +270,10 @@ fn chart(ui: &mut egui::Ui, state: &State, height: f32) {
         );
     }
 
-    let line: Vec<Pos2> = pts.iter().map(|&(age, b)| to_screen(age, b as f32)).collect();
+    let line: Vec<Pos2> = pts
+        .iter()
+        .map(|&(age, b)| to_screen(age, b as f32))
+        .collect();
 
     // Soft fill under the line, fading to transparent at the bottom.
     let base = plot.bottom();
@@ -273,23 +298,42 @@ fn chart(ui: &mut egui::Ui, state: &State, height: f32) {
     // Time axis: just the two ends.
     let y = rect.bottom() - 6.0;
     let span = format!("{} min", (window / 60.0).round() as u32);
-    painter.text(Pos2::new(plot.left(), y), egui::Align2::LEFT_CENTER, span, FontId::proportional(12.0), muted);
-    painter.text(Pos2::new(plot.right(), y), egui::Align2::RIGHT_CENTER, "now", FontId::proportional(12.0), muted);
+    painter.text(
+        Pos2::new(plot.left(), y),
+        egui::Align2::LEFT_CENTER,
+        span,
+        FontId::proportional(12.0),
+        muted,
+    );
+    painter.text(
+        Pos2::new(plot.right(), y),
+        egui::Align2::RIGHT_CENTER,
+        "now",
+        FontId::proportional(12.0),
+        muted,
+    );
 }
 
 fn footer(ui: &mut egui::Ui, app: &mut App) {
     let muted = ui.visuals().weak_text_color();
     ui.horizontal(|ui| {
         if let Some(err) = &app.opts.server_error {
-            ui.label(RichText::new(format!("OBS server not running: {err}")).color(ACCENT).size(13.0));
+            ui.label(
+                RichText::new(format!("OBS server not running: {err}"))
+                    .color(ACCENT)
+                    .size(13.0),
+            );
             return;
         }
         ui.label(RichText::new("OBS").color(muted).size(13.0));
         ui.label(RichText::new(&app.opts.overlay_url).size(13.0));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let copied = app.copied_at.is_some_and(|t| t.elapsed() < Duration::from_secs(2));
+            let copied = app
+                .copied_at
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(2));
             let text = if copied { "copied" } else { "copy" };
-            let resp = ui.add(egui::Button::new(RichText::new(text).color(ACCENT).size(13.0)).frame(false));
+            let resp = ui
+                .add(egui::Button::new(RichText::new(text).color(ACCENT).size(13.0)).frame(false));
             if resp.clicked() {
                 app.handle(ui.ctx(), Action::CopyUrl);
             }

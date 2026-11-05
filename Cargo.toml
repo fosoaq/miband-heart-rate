@@ -28,3 +28,13 @@ tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
 lto = true
 codegen-units = 1
 strip = true
+
+# objc2 checks Objective-C method signatures in debug builds, and its NSUUID
+# binding trips that check on recent macOS (`getUUIDBytes:` is reported as
+# taking `char*`), aborting as soon as a Bluetooth device is opened. Release
+# builds never run the check; match them here.
+[profile.dev.package.objc2]
+debug-assertions = false
+
+[profile.dev.package.objc2-foundation]
+debug-assertions = false

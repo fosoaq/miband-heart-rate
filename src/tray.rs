@@ -40,7 +40,9 @@ impl Tray {
             &quit,
         ])?;
 
-        let builder = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("Heart Rate");
+        let builder = TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip("Heart Rate");
         // macOS draws a monochrome template icon tinted to match the menu bar.
         #[cfg(target_os = "macos")]
         let builder = builder.with_icon_templated(heart_icon(true));
@@ -61,7 +63,10 @@ impl Tray {
     }
 
     pub fn action_for(&self, event: &MenuEvent) -> Option<Action> {
-        self.ids.iter().find(|(id, _)| *id == event.id).map(|(_, a)| *a)
+        self.ids
+            .iter()
+            .find(|(id, _)| *id == event.id)
+            .map(|(_, a)| *a)
     }
 
     /// Updates the tray with the current reading. Cheap to call every frame.
@@ -88,14 +93,26 @@ impl Tray {
 }
 
 /// Renders a heart shape into an RGBA icon.
+///
+/// The macOS menu bar scales the image to its full 22 pt height, while system glyphs
+/// are ~14–16 pt, so the template variant leaves transparent padding around the heart.
 pub fn heart_icon(template: bool) -> Icon {
-    let (w, h, rgba) = heart_rgba(64, if template { [0, 0, 0] } else { [0xff, 0x4d, 0x5e] });
+    let (w, h, rgba) = if template {
+        heart_rgba(64, [0, 0, 0], 0.66)
+    } else {
+        heart_rgba(64, [0xff, 0x4d, 0x5e], 0.88)
+    };
     Icon::from_rgba(rgba, w, h).expect("valid icon")
 }
 
 /// Heart via the implicit curve (x² + y² − 1)³ − x²y³ ≤ 0, 4×4 supersampled.
-pub fn heart_rgba(size: u32, rgb: [u8; 3]) -> (u32, u32, Vec<u8>) {
+/// `fill` is the share of the canvas width the heart spans (0..1), centred.
+pub fn heart_rgba(size: u32, rgb: [u8; 3], fill: f32) -> (u32, u32, Vec<u8>) {
     const SS: u32 = 4;
+    // The curve spans x ∈ [-1.14, 1.14] and y ∈ [-1, 1.23]; scale and centre it.
+    const HALF_WIDTH: f32 = 1.14;
+    const Y_CENTER: f32 = 0.115;
+    let k = 2.0 * HALF_WIDTH / fill;
     let mut out = Vec::with_capacity((size * size * 4) as usize);
     for py in 0..size {
         for px in 0..size {
@@ -104,8 +121,8 @@ pub fn heart_rgba(size: u32, rgb: [u8; 3]) -> (u32, u32, Vec<u8>) {
                 for sx in 0..SS {
                     let fx = (px as f32 + (sx as f32 + 0.5) / SS as f32) / size as f32;
                     let fy = (py as f32 + (sy as f32 + 0.5) / SS as f32) / size as f32;
-                    let x = (fx - 0.5) * 2.6;
-                    let y = (0.47 - fy) * 2.6;
+                    let x = (fx - 0.5) * k;
+                    let y = Y_CENTER + (0.5 - fy) * k;
                     let a = x * x + y * y - 1.0;
                     if a * a * a - x * x * y * y * y <= 0.0 {
                         hits += 1;
@@ -117,4 +134,41 @@ pub fn heart_rgba(size: u32, rgb: [u8; 3]) -> (u32, u32, Vec<u8>) {
         }
     }
     (size, size, out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::heart_rgba;
+
+    /// Bounding box (x0, y0, x1, y1) of pixels that are at least half opaque.
+    fn bbox(size: u32, rgba: &[u8]) -> (u32, u32, u32, u32) {
+        let (mut x0, mut y0, mut x1, mut y1) = (size, size, 0, 0);
+        for y in 0..size {
+            for x in 0..size {
+                if rgba[((y * size + x) * 4 + 3) as usize] >= 128 {
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                }
+            }
+        }
+        (x0, y0, x1, y1)
+    }
+
+    #[test]
+    fn heart_fills_requested_share_and_is_centred() {
+        for fill in [0.66, 0.88] {
+            let (size, _, rgba) = heart_rgba(64, [0, 0, 0], fill);
+            let (x0, y0, x1, y1) = bbox(size, &rgba);
+            let width = (x1 - x0 + 1) as f32 / size as f32;
+            assert!((width - fill).abs() < 0.05, "fill {fill}: width {width}");
+            // Centred within a pixel or two on both axes.
+            assert!(
+                (x0 as i32 - (size - 1 - x1) as i32).abs() <= 1,
+                "fill {fill}: x {x0}..{x1}"
+            );
+            assert!(
+                (y0 as i32 - (size - 1 - y1) as i32).abs() <= 2,
+                "fill {fill}: y {y0}..{y1}"
+            );
+        }
+    }
 }

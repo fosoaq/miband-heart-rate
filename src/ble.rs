@@ -47,12 +47,19 @@ pub async fn run(tx: Tx) {
 /// One scan → connect → stream cycle. Returns when the stream ends.
 async fn session(adapter: &Adapter, tx: &Tx) -> Result<()> {
     let device = find_device(adapter, tx).await?;
-    let name = device.name_async().await.unwrap_or_else(|_| "band".into());
+    // Mi Band 10 advertises its name with a trailing space ("Xiaomi ").
+    let name = match device.name_async().await {
+        Ok(n) if !n.trim().is_empty() => n.trim().to_owned(),
+        _ => "band".to_owned(),
+    };
 
     if !device.is_connected().await {
         tx.send_modify(|s| s.set_status(Status::Connecting(name.clone())));
         tracing::info!("connecting to {name} ({})", device.id());
-        adapter.connect_device(&device).await.context("Failed to connect")?;
+        adapter
+            .connect_device(&device)
+            .await
+            .context("Failed to connect")?;
     }
 
     let result = stream_measurements(&device, &name, tx).await;
@@ -63,7 +70,9 @@ async fn session(adapter: &Adapter, tx: &Tx) -> Result<()> {
 
 async fn find_device(adapter: &Adapter, tx: &Tx) -> Result<Device> {
     // The band may already be connected to this computer (e.g. by the OS).
-    let connected = adapter.connected_devices_with_services(&[HEART_RATE_SERVICE]).await?;
+    let connected = adapter
+        .connected_devices_with_services(&[HEART_RATE_SERVICE])
+        .await?;
     if let Some(device) = connected.into_iter().next() {
         return Ok(device);
     }
@@ -89,7 +98,10 @@ async fn stream_measurements(device: &Device, name: &str, tx: &Tx) -> Result<()>
         .next()
         .context("Device has no heart rate measurement characteristic")?;
 
-    let mut updates = characteristic.notify().await.context("Failed to subscribe to heart rate notifications")?;
+    let mut updates = characteristic
+        .notify()
+        .await
+        .context("Failed to subscribe to heart rate notifications")?;
     tx.send_modify(|s| s.set_status(Status::Connected(name.to_owned())));
     tracing::info!("connected to {name}");
 

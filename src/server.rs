@@ -59,7 +59,10 @@ fn host_allowed(req: &Request, allowed: &[String]) -> bool {
 }
 
 async fn overlay() -> impl IntoResponse {
-    ([(header::CACHE_CONTROL, "no-store")], axum::response::Html(OVERLAY_HTML))
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::response::Html(OVERLAY_HTML),
+    )
 }
 
 async fn api(AxState(rx): AxState<Rx>) -> impl IntoResponse {
@@ -68,6 +71,7 @@ async fn api(AxState(rx): AxState<Rx>) -> impl IntoResponse {
 }
 
 async fn events(AxState(rx): AxState<Rx>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let stream = WatchStream::new(rx).map(|state| Ok(Event::default().data(state.to_json().to_string())));
+    let stream =
+        WatchStream::new(rx).map(|state| Ok(Event::default().data(state.to_json().to_string())));
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
