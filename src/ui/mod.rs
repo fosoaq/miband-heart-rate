@@ -51,10 +51,11 @@ pub fn run(
         viewport: egui::ViewportBuilder::default()
             .with_title("Heart Rate")
             .with_app_id("miband-heart-rate")
-            .with_inner_size([440.0, 640.0])
-            .with_min_inner_size([340.0, 420.0])
+            .with_inner_size([720.0, 540.0])
+            .with_min_inner_size([560.0, 440.0])
             .with_visible(!opts.start_hidden)
             .with_icon(icon),
+        persist_window: true,
         ..Default::default()
     };
 
@@ -114,6 +115,7 @@ pub fn run(
                 pending,
                 quitting: false,
                 tab,
+                overlay_widget: overlay::Widget::default(),
                 copied: None,
             }))
         }),
@@ -129,6 +131,7 @@ pub(crate) struct App {
     pending: Arc<Mutex<Vec<MenuEvent>>>,
     quitting: bool,
     tab: Tab,
+    overlay_widget: overlay::Widget,
     /// Which URL was copied last, and when (for the "copied" hint).
     copied: Option<(String, Instant)>,
 }

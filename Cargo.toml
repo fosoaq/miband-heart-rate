@@ -13,7 +13,7 @@ anyhow = "1"
 axum = "0.8"
 bluest = "0.6.9"
 dirs = "7"
-eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow", "wayland", "x11"] }
+eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow", "persistence", "wayland", "x11"] }
 futures-lite = "2.6"
 open = "5"
 serde = { version = "1", features = ["derive"] }
