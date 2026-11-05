@@ -1,80 +1,153 @@
-#![feature(never_type)]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-use std::error::Error;
+mod ble;
+mod hr;
+mod server;
+mod state;
+mod tray;
+mod ui;
 
-use bluest::{btuuid::bluetooth_uuid_from_u16, Adapter, Device, Uuid};
-use futures_lite::stream::StreamExt;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::time::Duration;
 
-const HRS_UUID: Uuid = bluetooth_uuid_from_u16(0x180D);
-const HRM_UUID: Uuid = bluetooth_uuid_from_u16(0x2A37);
+use anyhow::{Context, Result, bail};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let adapter = Adapter::default()
-        .await
-        .ok_or("Bluetooth adapter not found")?;
-    adapter.wait_available().await?;
+use crate::state::{Status, Tx};
 
-    loop {
-        let device = {
-            let connected_heart_rate_devices =
-                adapter.connected_devices_with_services(&[HRS_UUID]).await?;
-            if let Some(device) = connected_heart_rate_devices.into_iter().next() {
-                device
-            } else {
-                println!("Starting scan");
-                let mut scan = adapter.discover_devices(&[HRS_UUID]).await?;
+const DEFAULT_PORT: u16 = 3030;
 
-                println!("Scan started");
-                let device = scan.next().await.unwrap()?;
+const HELP: &str = "\
+miband-heart-rate — live heart rate from a Xiaomi Smart Band over BLE, with an OBS overlay
 
-                println!("Found Device: [{}] {:?}", device, device.name_async().await);
-                device
+USAGE:
+    miband-heart-rate [OPTIONS]
+
+OPTIONS:
+    --port <N>    OBS server port on 127.0.0.1 (default 3030, env MIBAND_HR_PORT)
+    --hidden      start hidden in the tray
+    --headless    no window or tray: BLE + OBS server only, BPM to the log
+    --demo        no Bluetooth, generate a fake heart rate
+    -h, --help    print this help
+
+Logging: set RUST_LOG, e.g. RUST_LOG=debug.
+";
+
+struct Args {
+    port: u16,
+    hidden: bool,
+    headless: bool,
+    demo: bool,
+}
+
+fn parse_args() -> Result<Args> {
+    let mut args = Args {
+        port: match std::env::var("MIBAND_HR_PORT") {
+            Ok(v) => v.parse().context("MIBAND_HR_PORT must be a number")?,
+            Err(_) => DEFAULT_PORT,
+        },
+        hidden: false,
+        headless: false,
+        demo: false,
+    };
+    let mut it = std::env::args().skip(1);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--port" => args.port = it.next().context("--port needs a value")?.parse().context("invalid port")?,
+            "--hidden" => args.hidden = true,
+            "--headless" => args.headless = true,
+            "--demo" => args.demo = true,
+            "-h" | "--help" => {
+                print!("{HELP}");
+                std::process::exit(0);
             }
-        };
+            other => bail!("unknown argument: {other}\n\n{HELP}"),
+        }
+    }
+    Ok(args)
+}
 
-        let Err(err) = handle_device(&adapter, &device).await;
-        println!("Connection error: {err:?}");
+fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "miband_heart_rate=info".into()),
+        )
+        .init();
+
+    let args = parse_args()?;
+    let rt = tokio::runtime::Runtime::new()?;
+    let (tx, rx) = state::channel();
+
+    if args.demo {
+        rt.spawn(demo(tx));
+    } else {
+        rt.spawn(ble::run(tx));
+    }
+
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, args.port));
+    let overlay_url = format!("http://{addr}/");
+    let server_error = match rt.block_on(server::bind(addr)) {
+        Ok(listener) => {
+            tracing::info!("OBS overlay: {overlay_url}");
+            let rx = rx.clone();
+            rt.spawn(async move {
+                if let Err(e) = server::serve(listener, rx).await {
+                    tracing::error!("http server stopped: {e}");
+                }
+            });
+            None
+        }
+        Err(e) => {
+            tracing::error!("cannot listen on {addr}: {e}");
+            Some(format!("port {} is in use", args.port))
+        }
+    };
+
+    if args.headless {
+        if server_error.is_some() {
+            bail!("failed to start the OBS server on {addr}");
+        }
+        return rt.block_on(headless(rx));
+    }
+
+    let opts = ui::Options { overlay_url, server_error, start_hidden: args.hidden };
+    ui::run(rx, rt.handle().clone(), opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // Don't wait for BLE / HTTP tasks blocked on I/O.
+    rt.shutdown_timeout(Duration::from_millis(200));
+    Ok(())
+}
+
+async fn headless(mut rx: state::Rx) -> Result<()> {
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => return Ok(()),
+            changed = rx.changed() => {
+                changed?;
+                let s = rx.borrow_and_update();
+                match s.bpm() {
+                    Some(bpm) => tracing::info!("{bpm} BPM"),
+                    None => tracing::info!("{}", s.status.label()),
+                }
+            }
+        }
     }
 }
 
-async fn handle_device(adapter: &Adapter, device: &Device) -> Result<!, Box<dyn Error>> {
-    // Connect
-    if !device.is_connected().await {
-        println!("Connecting device: {}", device.id());
-        adapter.connect_device(&device).await?;
+/// Fake band for testing the UI and the OBS overlay without hardware.
+async fn demo(tx: Tx) {
+    tx.send_modify(|s| s.set_status(Status::Scanning));
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    tx.send_modify(|s| s.set_status(Status::Connected("Demo Band".into())));
+    let mut t = 0.0f32;
+    let mut noise = 0x2545_f491u32;
+    loop {
+        noise ^= noise << 13;
+        noise ^= noise >> 17;
+        noise ^= noise << 5;
+        let jitter = (noise % 5) as f32 - 2.0;
+        let bpm = 78.0 + 18.0 * (t / 40.0).sin() + 6.0 * (t / 7.0).sin() + jitter;
+        tx.send_modify(|s| s.push(hr::Measurement { bpm: bpm as u16, contact: Some(true) }));
+        t += 1.0;
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
-
-    // Discover services
-    let heart_rate_services = device.discover_services_with_uuid(HRS_UUID).await?;
-    let heart_rate_service = heart_rate_services
-        .first()
-        .ok_or("Device should has one heart rate service at least")?;
-
-    // Discover
-    let heart_rate_measurements = heart_rate_service
-        .discover_characteristics_with_uuid(HRM_UUID)
-        .await?;
-    let heart_rate_measurement = heart_rate_measurements
-        .first()
-        .ok_or("HeartRateService should has one heart rate measurement characteristic at least")?;
-
-    let mut updates = heart_rate_measurement.notify().await?;
-    while let Some(Ok(heart_rate)) = updates.next().await {
-        let flag = *heart_rate.get(0).ok_or("No flag")?;
-
-        // Heart Rate Value Format
-        let mut heart_rate_value = *heart_rate.get(1).ok_or("No heart rate u8")? as u16;
-        if flag & 0b00001 != 0 {
-            heart_rate_value |= (*heart_rate.get(2).ok_or("No heart rate u16")? as u16) << 8;
-        }
-
-        // Sensor Contact Supported
-        let mut sensor_contact = None;
-        if flag & 0b00100 != 0 {
-            sensor_contact = Some(flag & 0b00010 != 0)
-        }
-        println!("HeartRateValue: {heart_rate_value}, SensorContactDetected: {sensor_contact:?}");
-    }
-    Err("No longer heart rate notify".into())
 }
