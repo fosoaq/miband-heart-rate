@@ -28,6 +28,23 @@ tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 
+# `cargo deb` (Linux release): binary, menu entry and icon.
+[package.metadata.deb]
+maintainer = "fosoaq <fosoaq@proton.me>"
+section = "utils"
+priority = "optional"
+depends = "$auto, bluez"
+extended-description = """\
+Reads the heart rate a Xiaomi Smart Band broadcasts over Bluetooth LE (or any \
+device with the standard Heart Rate service). Tray app with a small window, plus \
+transparent widgets for OBS Browser sources served on 127.0.0.1."""
+assets = [
+    ["target/release/miband-heart-rate", "usr/bin/", "755"],
+    ["assets/miband-heart-rate.desktop", "usr/share/applications/", "644"],
+    ["assets/icon-512.png", "usr/share/icons/hicolor/512x512/apps/miband-heart-rate.png", "644"],
+    ["README.md", "usr/share/doc/miband-heart-rate/", "644"],
+]
+
 [profile.release]
 lto = true
 codegen-units = 1

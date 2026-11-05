@@ -26,14 +26,11 @@ jobs:
       - run: cargo build --release --locked
       - name: Package
         shell: pwsh
-        run: |
-          New-Item -ItemType Directory dist | Out-Null
-          Copy-Item target/release/miband-heart-rate.exe dist/
-          Compress-Archive dist/miband-heart-rate.exe miband-heart-rate-windows-x86_64.zip
+        run: Copy-Item target/release/miband-heart-rate.exe miband-heart-rate-windows-x86_64.exe
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
-          path: miband-heart-rate-windows-x86_64.zip
+          path: miband-heart-rate-windows-x86_64.exe
 
   macos:
     runs-on: macos-latest
@@ -76,13 +73,33 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026
         with:
           toolchain: stable
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        with:
+          tool: cargo-deb
       - run: cargo build --release --locked
-      - name: Package
+      - name: Plain binary
         run: tar -czf miband-heart-rate-linux-x86_64.tar.gz -C target/release miband-heart-rate
+      - name: Debian package
+        run: |
+          cargo deb --no-build --output miband-heart-rate-linux-amd64.deb
+          dpkg-deb --info miband-heart-rate-linux-amd64.deb
+          dpkg-deb --contents miband-heart-rate-linux-amd64.deb
+      - name: AppImage
+        env:
+          APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+        run: |
+          curl --fail --location --silent --show-error -o "$RUNNER_TEMP/appimagetool" "$APPIMAGETOOL_URL"
+          echo "$APPIMAGETOOL_SHA256  $RUNNER_TEMP/appimagetool" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          APPIMAGETOOL="$RUNNER_TEMP/appimagetool" scripts/appimage.sh target/release/miband-heart-rate miband-heart-rate-linux-x86_64.AppImage
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux
-          path: miband-heart-rate-linux-x86_64.tar.gz
+          path: |
+            miband-heart-rate-linux-x86_64.tar.gz
+            miband-heart-rate-linux-amd64.deb
+            miband-heart-rate-linux-x86_64.AppImage
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')

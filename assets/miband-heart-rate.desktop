@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MiBand Heart Rate
+Comment=Live heart rate from a Xiaomi Smart Band, with OBS widgets
+Exec=miband-heart-rate
+Icon=miband-heart-rate
+Terminal=false
+Categories=Utility;
+StartupWMClass=miband-heart-rate

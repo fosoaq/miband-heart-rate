@@ -16,19 +16,31 @@ For Mi Band 4–7 see the upstream [`miband-4-to-7`](https://github.com/Tnze/mib
 
 ## Install
 
-Download the archive for your system from [Releases](../../releases).
+Download the file for your system from [Releases](../../releases).
 
-**macOS** — unzip and move `MiBand Heart Rate.app` to Applications. The app is not
-notarized, so the first launch needs right-click → **Open** (or
+**macOS** — `miband-heart-rate-macos-universal.zip` (Apple silicon and Intel). Unzip and
+move `MiBand Heart Rate.app` to Applications. The app is not notarized, so the first
+launch needs right-click → **Open** (or
 `xattr -dr com.apple.quarantine "/Applications/MiBand Heart Rate.app"`). Allow Bluetooth
 access when asked.
 
-**Windows** — unzip and run `miband-heart-rate.exe`. SmartScreen may warn about an
-unknown publisher: **More info** → **Run anyway**. Windows 10 or later.
+**Windows** — `miband-heart-rate-windows-x86_64.exe`, nothing to install: just run it.
+SmartScreen may warn about an unknown publisher: **More info** → **Run anyway**.
+Windows 10 or later.
 
-**Linux** — unpack and run `miband-heart-rate`. Needs BlueZ running. The tray icon uses
-StatusNotifierItem: it works out of the box on KDE and most desktops; on GNOME install
-the *AppIndicator and KStatusNotifierItem Support* extension.
+**Linux** (x86_64, glibc 2.35+ — Ubuntu 22.04, Debian 12, Fedora 36 and newer):
+
+- Debian / Ubuntu: `sudo apt install ./miband-heart-rate-linux-amd64.deb` — adds the
+  app to the menu.
+- Any distribution: `miband-heart-rate-linux-x86_64.AppImage`, then
+  `chmod +x` it and run.
+- Or the bare binary in `miband-heart-rate-linux-x86_64.tar.gz`.
+
+Needs BlueZ running. The tray icon uses StatusNotifierItem: it works out of the box on
+KDE and most desktops; on GNOME install the *AppIndicator and KStatusNotifierItem
+Support* extension.
+
+Each release also lists `SHA256SUMS` for checking the downloads.
 
 ## Usage
 
