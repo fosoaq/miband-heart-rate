@@ -1,7 +1,7 @@
 #!/bin/sh
 # Packs a built Linux binary into an AppImage.
 #
-# Usage: APPIMAGETOOL=/path/to/appimagetool RUNTIME=/path/to/runtime-x86_64 \\
+# Usage: APPIMAGETOOL=/path/to/appimagetool RUNTIME=/path/to/runtime-x86_64 \
 #          scripts/appimage.sh <binary> <out-file>
 # Run from the repository root.
 set -eu
