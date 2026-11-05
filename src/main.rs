@@ -1,8 +1,10 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod ble;
+mod demo;
 mod hr;
 mod server;
+mod settings;
 mod state;
 mod tray;
 mod ui;
@@ -12,12 +14,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use crate::state::{Status, Tx};
-
 const DEFAULT_PORT: u16 = 3030;
 
 const HELP: &str = "\
-miband-heart-rate — live heart rate from a Xiaomi Smart Band over BLE, with an OBS overlay
+miband-heart-rate — live heart rate from a Xiaomi Smart Band over BLE, with OBS widgets
 
 USAGE:
     miband-heart-rate [OPTIONS]
@@ -25,8 +25,9 @@ USAGE:
 OPTIONS:
     --port <N>    OBS server port on 127.0.0.1 (default 3030, env MIBAND_HR_PORT)
     --hidden      start hidden in the tray
-    --headless    no window or tray: BLE + OBS server only, BPM to the log
-    --demo        no Bluetooth, generate a fake heart rate
+    --headless    no window or tray: BLE + OBS server only, BPM to the log.
+                  Without a saved band, uses the one with the strongest signal.
+    --demo        no Bluetooth, fake bands and heart rate (for setting up OBS)
     -h, --help    print this help
 
 Logging: set RUST_LOG, e.g. RUST_LOG=debug.
@@ -82,19 +83,34 @@ fn main() -> Result<()> {
 
     let args = parse_args()?;
     let rt = tokio::runtime::Runtime::new()?;
-    let (tx, rx) = state::channel();
 
+    let mut loaded = settings::load();
+    if let Some(path) = settings::path() {
+        tracing::info!("settings: {}", path.display());
+    }
+    // The demo starts with no band chosen and never saves one over the real choice.
+    let pinned_device = args.demo.then(|| loaded.device.take());
+
+    let (tx, rx) = state::channel(loaded);
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    rt.spawn(settings::persist(rx.clone(), pinned_device));
     if args.demo {
-        rt.spawn(demo(tx));
+        rt.spawn(demo::run(tx.clone(), cmd_rx));
     } else {
-        rt.spawn(ble::run(tx));
+        let opts = ble::Options {
+            auto_pick: args.headless,
+        };
+        rt.spawn(ble::run(tx.clone(), cmd_rx, opts));
     }
 
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, args.port));
-    let overlay_url = format!("http://{addr}/");
+    let base_url = format!("http://{addr}");
     let server_error = match rt.block_on(server::bind(addr)) {
         Ok(listener) => {
-            tracing::info!("OBS overlay: {overlay_url}");
+            for kind in server::WIDGETS {
+                tracing::info!("OBS widget: {base_url}/widget/{kind}");
+            }
             let rx = rx.clone();
             rt.spawn(async move {
                 if let Err(e) = server::serve(listener, rx).await {
@@ -113,56 +129,42 @@ fn main() -> Result<()> {
         if server_error.is_some() {
             bail!("failed to start the OBS server on {addr}");
         }
+        // Keep the command channel open so the BLE task doesn't treat it as closed.
+        let _cmds = cmd_tx;
         return rt.block_on(headless(rx));
     }
 
     let opts = ui::Options {
-        overlay_url,
+        base_url,
         server_error,
         start_hidden: args.hidden,
     };
-    ui::run(rx, rt.handle().clone(), opts).map_err(|e| anyhow::anyhow!("{e}"))?;
-    // Don't wait for BLE / HTTP tasks blocked on I/O.
-    rt.shutdown_timeout(Duration::from_millis(200));
+    ui::run(tx, cmd_tx, rt.handle().clone(), opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // Give a pending settings save a moment, but don't wait for BLE / HTTP tasks blocked on I/O.
+    rt.shutdown_timeout(Duration::from_millis(700));
     Ok(())
 }
 
 async fn headless(mut rx: state::Rx) -> Result<()> {
+    let mut last = String::new();
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => return Ok(()),
             changed = rx.changed() => {
                 changed?;
-                let s = rx.borrow_and_update();
-                match s.bpm() {
-                    Some(bpm) => tracing::info!("{bpm} BPM"),
-                    None => tracing::info!("{}", s.status.label()),
+                let line = {
+                    let s = rx.borrow_and_update();
+                    match s.bpm() {
+                        Some(bpm) => format!("{bpm} BPM"),
+                        None => s.status.label(),
+                    }
+                };
+                // The state also changes for the nearby list; only log what's new.
+                if line != last {
+                    tracing::info!("{line}");
+                    last = line;
                 }
             }
         }
-    }
-}
-
-/// Fake band for testing the UI and the OBS overlay without hardware.
-async fn demo(tx: Tx) {
-    tx.send_modify(|s| s.set_status(Status::Scanning));
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    tx.send_modify(|s| s.set_status(Status::Connected("Demo Band".into())));
-    let mut t = 0.0f32;
-    let mut noise = 0x2545_f491u32;
-    loop {
-        noise ^= noise << 13;
-        noise ^= noise >> 17;
-        noise ^= noise << 5;
-        let jitter = (noise % 5) as f32 - 2.0;
-        let bpm = 78.0 + 18.0 * (t / 40.0).sin() + 6.0 * (t / 7.0).sin() + jitter;
-        tx.send_modify(|s| {
-            s.push(hr::Measurement {
-                bpm: bpm as u16,
-                contact: Some(true),
-            })
-        });
-        t += 1.0;
-        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }

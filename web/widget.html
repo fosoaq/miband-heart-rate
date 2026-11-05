@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Heart Rate</title>
+<!--
+  OBS widget. Which one is shown depends on the path:
+    /widget/bpm    the number with a beating heart (also served at /)
+    /widget/chart  heart rate over the last minutes
+    /widget/stats  min / avg / max
+  Everything about the look comes from the app's Overlay tab and updates live.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    font-family: "SF Pro Display", "Segoe UI", "Inter", system-ui, sans-serif;
+    user-select: none; font-variant-numeric: tabular-nums;
+  }
+  .widget { display: none; }
+  .shadow { text-shadow: 0 2px 12px rgba(0, 0, 0, .35); }
+  .shadow canvas { filter: drop-shadow(0 2px 8px rgba(0, 0, 0, .35)); }
+  [hidden] { display: none !important; }
+
+  /* bpm */
+  #bpm { align-items: center; gap: calc(var(--size) * 0.12); color: var(--color); --size: 160px; }
+  #bpm .heart {
+    width: calc(var(--size) * 0.55); height: calc(var(--size) * 0.55);
+    fill: var(--accent); transform-origin: 50% 55%;
+  }
+  #bpm.animate .heart { animation: beat var(--period, 1s) ease-out infinite; }
+  #bpm.idle .heart { animation: none; opacity: .35; }
+  @keyframes beat { 0% { transform: scale(1.12); } 30%, 100% { transform: scale(1); } }
+  #bpm .num { font-size: var(--size); font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+  #bpm .unit { font-size: calc(var(--size) * 0.16); font-weight: 600; letter-spacing: .2em; opacity: .7; margin-top: calc(var(--size) * 0.04); }
+  #bpm .status { font-size: calc(var(--size) * 0.14); opacity: .7; }
+
+  /* stats */
+  #stats { gap: calc(var(--size) * 0.8); --size: 48px; }
+  #stats.vertical { flex-direction: column; gap: calc(var(--size) * 0.3); }
+  #stats .cell { display: flex; flex-direction: column; }
+  #stats .label {
+    font-size: calc(var(--size) * 0.32); font-weight: 600; letter-spacing: .15em;
+    text-transform: uppercase; color: var(--label);
+  }
+  #stats .value { font-size: var(--size); font-weight: 700; line-height: 1.05; color: var(--color); }
+</style>
+</head>
+<body>
+  <div class="widget" id="bpm">
+    <svg class="heart" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+    </svg>
+    <div>
+      <div class="num">--</div>
+      <div class="unit">BPM</div>
+      <div class="status" hidden></div>
+    </div>
+  </div>
+
+  <div class="widget" id="chart"><canvas></canvas></div>
+
+  <div class="widget" id="stats">
+    <div class="cell" data-key="min"><div class="label">min</div><div class="value">--</div></div>
+    <div class="cell" data-key="avg"><div class="label">avg</div><div class="value">--</div></div>
+    <div class="cell" data-key="max"><div class="label">max</div><div class="value">--</div></div>
+  </div>
+<script>
+  const kind = location.pathname.replace(/\/+$/, '').split('/').pop() || 'bpm';
+  const el = document.getElementById(kind) || document.getElementById('bpm');
+  el.style.display = 'flex';
+
+  let latest = null;     // last payload
+  let receivedAt = 0;    // performance.now() when it arrived
+
+  // ---- bpm ----
+  function renderBpm(d, w) {
+    const live = d.connected && d.bpm;
+    el.style.setProperty('--size', w.size + 'px');
+    el.style.setProperty('--color', w.color);
+    el.style.setProperty('--accent', w.accent);
+    el.classList.toggle('shadow', w.shadow);
+    el.classList.toggle('animate', w.animate_heart);
+    el.classList.toggle('idle', !live);
+    el.querySelector('.heart').style.display = w.show_heart ? '' : 'none';
+    el.querySelector('.num').textContent = live ? d.bpm : '--';
+    if (live) el.style.setProperty('--period', (60 / d.bpm).toFixed(3) + 's');
+    const status = el.querySelector('.status');
+    status.textContent = d.status_text || '';
+    status.hidden = live || !w.show_status;
+    el.querySelector('.unit').hidden = !w.show_unit || (!live && w.show_status);
+  }
+
+  // ---- stats ----
+  function renderStats(d, w) {
+    el.style.setProperty('--size', w.size + 'px');
+    el.style.setProperty('--color', w.color);
+    el.style.setProperty('--label', w.label_color);
+    el.classList.toggle('shadow', w.shadow);
+    el.classList.toggle('vertical', w.vertical);
+    const show = { min: w.show_min, avg: w.show_avg, max: w.show_max };
+    for (const cell of el.querySelectorAll('.cell')) {
+      const key = cell.dataset.key;
+      cell.hidden = !show[key];
+      cell.querySelector('.value').textContent = d.stats ? d.stats[key] : '--';
+    }
+  }
+
+  // ---- chart ----
+  const canvas = el.querySelector('canvas');
+  function renderChart() {
+    if (!latest || kind !== 'chart') return;
+    const w = latest.widgets.chart;
+    el.classList.toggle('shadow', w.shadow);
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== w.width * dpr || canvas.height !== w.height * dpr) {
+      canvas.width = w.width * dpr; canvas.height = w.height * dpr;
+      canvas.style.width = w.width + 'px'; canvas.style.height = w.height + 'px';
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w.width, w.height);
+
+    const span = w.minutes * 60;
+    const drift = (performance.now() - receivedAt) / 1000;
+    const pts = (latest.history || [])
+      .map(([age, bpm]) => [age + drift, bpm])
+      .filter(([age]) => age <= span);
+    if (pts.length < 2) return;
+
+    const labelW = w.show_range ? Math.max(28, w.height * 0.18) : 0;
+    const pad = w.line_width + 2;
+    const left = pad, right = w.width - labelW - pad, top = pad, bottom = w.height - pad;
+    let lo = Infinity, hi = -Infinity;
+    for (const [, b] of pts) { lo = Math.min(lo, b); hi = Math.max(hi, b); }
+    const margin = Math.max((hi - lo) * 0.15, 5);
+    const yLo = lo - margin, yHi = hi + margin;
+    const x = age => right - (age / span) * (right - left);
+    const y = bpm => bottom - ((bpm - yLo) / (yHi - yLo)) * (bottom - top);
+
+    ctx.beginPath();
+    pts.forEach(([age, b], i) => (i ? ctx.lineTo(x(age), y(b)) : ctx.moveTo(x(age), y(b))));
+    if (w.fill) {
+      ctx.save();
+      ctx.lineTo(x(pts[pts.length - 1][0]), bottom);
+      ctx.lineTo(x(pts[0][0]), bottom);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, top, 0, bottom);
+      g.addColorStop(0, withAlpha(w.color, 0.3));
+      g.addColorStop(1, withAlpha(w.color, 0));
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.restore();
+      ctx.beginPath();
+      pts.forEach(([age, b], i) => (i ? ctx.lineTo(x(age), y(b)) : ctx.moveTo(x(age), y(b))));
+    }
+    ctx.strokeStyle = w.color;
+    ctx.lineWidth = w.line_width;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    const [lastAge, lastBpm] = pts[pts.length - 1];
+    ctx.fillStyle = w.color;
+    ctx.beginPath();
+    ctx.arc(x(lastAge), y(lastBpm), w.line_width * 1.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (w.show_range) {
+      ctx.fillStyle = w.label_color;
+      ctx.font = `600 ${Math.round(Math.max(12, w.height * 0.09))}px system-ui, sans-serif`;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(hi, w.width, y(hi));
+      ctx.fillText(lo, w.width, y(lo));
+    }
+  }
+
+  // "#rrggbbaa" with its alpha scaled by `k`.
+  function withAlpha(hex, k) {
+    const n = parseInt(hex.slice(1), 16);
+    const a = hex.length > 7 ? (n & 255) / 255 : 1;
+    const rgb = hex.length > 7 ? n >>> 8 : n;
+    return `rgba(${rgb >> 16 & 255}, ${rgb >> 8 & 255}, ${rgb & 255}, ${a * k})`;
+  }
+
+  function render(d) {
+    latest = d;
+    receivedAt = performance.now();
+    if (!d.widgets) return;
+    if (kind === 'stats') renderStats(d, d.widgets.stats);
+    else if (kind === 'chart') renderChart();
+    else renderBpm(d, d.widgets.bpm);
+  }
+
+  // Keep the chart sliding between readings.
+  if (kind === 'chart') setInterval(renderChart, 250);
+
+  function connect() {
+    const es = new EventSource('/events' + (kind === 'chart' ? '?history=1' : ''));
+    es.onmessage = e => render(JSON.parse(e.data));
+    es.onerror = () => {
+      es.close();
+      if (latest) render({ ...latest, connected: false, bpm: null, status_text: 'App is not running' });
+      setTimeout(connect, 2000);
+    };
+  }
+  connect();
+</script>
+</body>
+</html>

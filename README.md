@@ -1,12 +1,14 @@
 # MiBand Heart Rate
 
 Live heart rate from a Xiaomi Smart Band on your desktop: a tray app for Windows, macOS
-and Linux, with a ready-made overlay for OBS.
+and Linux, with customizable widgets for OBS.
 
-- Reads the band's heart rate broadcast over Bluetooth LE and reconnects on its own.
+- Reads the band's heart rate broadcast over Bluetooth LE. You pick your band once;
+  after that it connects only to that one and reconnects on its own.
 - Shows the current BPM in the macOS menu bar or the tray tooltip.
 - A small window with the current reading, min / avg / max and a 10-minute chart.
-- Serves a transparent overlay for an OBS Browser source, plus a JSON API.
+- Three transparent widgets for OBS Browser sources (heart rate, chart, min / avg / max),
+  styled from the app and updated live, plus a JSON API.
 
 Tested with Xiaomi Smart Band 10. It uses the standard Bluetooth Heart Rate service
 (`0x180D`), so other bands and chest straps that broadcast it should work too.
@@ -32,9 +34,16 @@ the *AppIndicator and KStatusNotifierItem Support* extension.
 
 1. On the band, turn on heart rate sharing (the *Share HR* / heart rate broadcast
    setting).
-2. Start the app. It finds the band and connects; the BPM appears in the window and the
-   tray.
-3. Closing the window hides it to the tray. Use the tray menu to bring it back or quit.
+2. Start the app. The **Device** tab lists the bands broadcasting nearby, strongest
+   signal first; click **use** next to yours. If you're not sure which one it is, hold
+   the band next to the computer and it moves to the top.
+3. From then on the app connects only to that band, also after a restart. **disconnect**
+   pauses it, **forget** lets you choose again.
+4. Closing the window hides it to the tray. Use the tray menu to bring it back or quit.
+
+Settings (the chosen band and the widget styles) are saved in `settings.json` in the
+system config folder: `~/Library/Application Support/miband-heart-rate` on macOS,
+`%APPDATA%\miband-heart-rate` on Windows, `~/.config/miband-heart-rate` on Linux.
 
 ### Command line
 
@@ -43,28 +52,31 @@ miband-heart-rate [OPTIONS]
 
   --port <N>    OBS server port on 127.0.0.1 (default 3030, env MIBAND_HR_PORT)
   --hidden      start hidden in the tray
-  --headless    no window or tray: Bluetooth + OBS server only, BPM to the log
-  --demo        no Bluetooth, generate a fake heart rate (for setting up OBS)
+  --headless    no window or tray: Bluetooth + OBS server only, BPM to the log.
+                Without a saved band, uses the one with the strongest signal.
+  --demo        no Bluetooth, fake bands and heart rate (for setting up OBS)
 ```
+
+`--demo` never replaces the band you chose; widget styles changed in the demo are kept.
 
 Logging is controlled by `RUST_LOG`, e.g. `RUST_LOG=debug`.
 
-## OBS overlay
+## OBS widgets
 
-Add a **Browser** source with the URL `http://127.0.0.1:3030/`. The background is
-transparent; the number updates the moment a reading arrives and the heart beats at the
-current rate.
+| Widget | URL |
+|---|---|
+| Heart rate (number + beating heart) | `http://127.0.0.1:3030/widget/bpm` |
+| Chart (last 1–10 minutes) | `http://127.0.0.1:3030/widget/chart` |
+| Min / avg / max | `http://127.0.0.1:3030/widget/stats` |
 
-The look can be tuned with query parameters:
+Add each one you want as a separate **Browser** source, so they can be placed and scaled
+independently. The background is transparent.
 
-| Parameter | Default | Meaning |
-|---|---|---|
-| `color` | `ff4d5e` | heart colour, hex without `#` |
-| `size` | `160` | font size of the number, px |
-| `label` | `1` | show `BPM` under the number |
-| `status` | `1` | show the connection status while there is no reading |
+Everything about their look is set in the app's **Overlay** tab: sizes, colours (with
+transparency), what to show, the chart's time span, line and labels, row or column layout
+for the stats. Changes show up in OBS immediately, without refreshing the source.
 
-Example: `http://127.0.0.1:3030/?color=ffffff&size=120&label=0`
+`http://127.0.0.1:3030/` is the heart rate widget too, so older setups keep working.
 
 The server only listens on `127.0.0.1` and only answers requests addressed to
 `127.0.0.1` or `localhost`.
@@ -72,7 +84,7 @@ The server only listens on `127.0.0.1` and only answers requests addressed to
 ### API
 
 `GET /api` returns the current state; `GET /events` streams the same object as
-Server-Sent Events on every change.
+Server-Sent Events on every change. Add `?history=1` to either to include the samples.
 
 ```json
 {
@@ -81,12 +93,16 @@ Server-Sent Events on every change.
   "contact": true,
   "status": { "state": "connected", "detail": "Xiaomi Smart Band 10 DD4E" },
   "status_text": "Xiaomi Smart Band 10 DD4E",
-  "stats": { "min": 64, "avg": 71, "max": 88 }
+  "stats": { "min": 64, "avg": 71, "max": 88 },
+  "widgets": { "bpm": { "size": 160, "color": "#ffffffff", "...": "..." }, "chart": {}, "stats": {} },
+  "history": [[598.0, 66], [597.0, 67], "..."]
 }
 ```
 
 `bpm` is `null` while disconnected. `contact` is whether the band is worn, `null` if
-the band doesn't report it. `stats` covers the last 10 minutes.
+the band doesn't report it. `stats` covers the last 10 minutes. `history` (only with
+`?history=1`) is `[seconds_ago, bpm]` pairs, oldest first. `widgets` holds the styles
+from the Overlay tab.
 
 ## Building from source
 

@@ -12,6 +12,7 @@ repository = "https://github.com/fosoaq/miband-heart-rate"
 anyhow = "1"
 axum = "0.8"
 bluest = "0.6.9"
+dirs = "7"
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 futures-lite = "2.6"
 open = "5"
@@ -23,6 +24,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
 
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
 lto = true
