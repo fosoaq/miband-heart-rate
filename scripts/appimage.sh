@@ -1,7 +1,8 @@
 #!/bin/sh
 # Packs a built Linux binary into an AppImage.
 #
-# Usage: APPIMAGETOOL=/path/to/appimagetool scripts/appimage.sh <binary> <out-file>
+# Usage: APPIMAGETOOL=/path/to/appimagetool RUNTIME=/path/to/runtime-x86_64 \\
+#          scripts/appimage.sh <binary> <out-file>
 # Run from the repository root.
 set -eu
 
@@ -16,5 +17,5 @@ cp assets/icon-512.png "$appdir/miband-heart-rate.png"
 ln -s usr/bin/miband-heart-rate "$appdir/AppRun"
 
 # appimagetool is itself an AppImage; CI runners have no FUSE, so let it unpack itself.
-APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$APPIMAGETOOL" --no-appstream "$appdir" "$out"
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$APPIMAGETOOL" --no-appstream --runtime-file "$RUNTIME" "$appdir" "$out"
 rm -rf "$(dirname "$appdir")"

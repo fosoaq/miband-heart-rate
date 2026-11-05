@@ -88,11 +88,16 @@ jobs:
         env:
           APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
           APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+          # The runtime ends up inside the AppImage; without this appimagetool fetches "continuous".
+          RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
         run: |
           curl --fail --location --silent --show-error -o "$RUNNER_TEMP/appimagetool" "$APPIMAGETOOL_URL"
+          curl --fail --location --silent --show-error -o "$RUNNER_TEMP/runtime" "$RUNTIME_URL"
           echo "$APPIMAGETOOL_SHA256  $RUNNER_TEMP/appimagetool" | sha256sum --check
+          echo "$RUNTIME_SHA256  $RUNNER_TEMP/runtime" | sha256sum --check
           chmod +x "$RUNNER_TEMP/appimagetool"
-          APPIMAGETOOL="$RUNNER_TEMP/appimagetool" scripts/appimage.sh target/release/miband-heart-rate miband-heart-rate-linux-x86_64.AppImage
+          APPIMAGETOOL="$RUNNER_TEMP/appimagetool" RUNTIME="$RUNNER_TEMP/runtime" scripts/appimage.sh target/release/miband-heart-rate miband-heart-rate-linux-x86_64.AppImage
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux
